@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Market Logic Software - SpeechToText - Example</title>
+</head>
+<body onload="onLoad()">
+
+<button id="start" disabled>Start</button>
+<pre id="status">Loading...</pre>
+<pre id="text"></pre>
+
+<script src="lib/MediaStreamRecorder-1.3.4.js"></script>
+<script src="lib/client-helper.js"></script>
+
+<script>
+    function onLoad() {
+
+        const WEB_SOCKET_URL = "ws://localhost:8080/";
+
+        const configuration = {
+            language: 'en-US',
+            mimeType: 'audio/wav',
+            encoding: 'LINEAR16',
+            sampleRate: 44100,
+            audioChannels: 1
+        };
+
+        // 01. Ask permission to use the microphone
+        navigator.getUserMedia({ audio: true }, microphoneIsAvailable, microphoneIsBlocked);
+
+        function microphoneIsAvailable(stream) {
+            console.log('[SpeechToText]', 'UserMedia', 'Access to the microphone has been allowed');
+
+            // 02. Wrap the audio stream with MediaStreamRecorder
+            mediaRecorder = new MediaStreamRecorder(stream);
+            mediaRecorder.mimeType = configuration.mimeType;
+            mediaRecorder.audioChannels = configuration.audioChannels;
+            mediaRecorder.sampleRate = configuration.sampleRate;
+
+            mediaRecorder.ondataavailable = function(blob) {
+                console.log('[SpeechToText]', 'MediaRecorder', 'Event: onDataAvailable');
+                socket.send(blob);
+            };
+
+            element.start.enable();
+            element.status.set('Ready to record !');
+        }
+
+        function microphoneIsBlocked(error) {
+            console.error('[SpeechToText]', 'UserMedia has not been allowed', error);
+
+            element.start.disable();
+            element.status.set('/!\\ The usage of the microphone is not allowed /!\\');
+        }
+
+        // 03. User starts a new session (he triggers a button in this case)
+        element.start.onClick(function() {
+            element.start.disable();
+            element.status.set('Opening Web Socket...');
+            element.text.set('');
+
+            // 04. Connect to the socket
+            socket = new WebSocket(WEB_SOCKET_URL);
+
+            socket.onopen = function() {
+                // 05. Send the configuration
+                socket.send(JSON.stringify({ type: 'start', config: configuration }));
+            };
+
+            socket.onmessage = function(event) {
+                console.log('[SpeechToText]', 'WebSocket', 'received message', event);
+
+                const message = JSON.parse(event.data);
+
+                switch (message.type) {
+
+                    case 'ready':
+                        // 06. Service is now ready, starts to record the audio
+                        element.status.set('Recording...');
+                        mediaRecorder.start(500);
+                        break;
+
+                    case 'text':
+                        // 07. Receive text on the fly
+                        element.text.set(message.text);
+                        break;
+
+                    case 'end-of-utterance':
+                        // 08. End of the voice/utterance has been detected
+                        element.status.set('End of voice detected, ending...');
+                        mediaRecorder.stop();
+                        break;
+
+                    case 'end':
+                        // 09. Session is definitely terminated, receive a last text
+                        element.status.set('End');
+                        element.start.enable();
+                        element.text.set(message.text);
+                        break;
+
+                    case 'error':
+                        element.status.set('ERROR... Check the logs in the console');
+                        console.error('[SpeechToText]', 'WebSocket', 'Error from the service', message.error);
+                        break;
+                }
+            };
+
+            socket.onclose = function() {
+                console.log('[SpeechToText]', 'WebSocket', 'WebSocket has been closed');
+            };
+
+            socket.onerror = function(error) {
+                console.log('[SpeechToText]', 'WebSocket', 'Error', error);
+            };
+        });
+    }
+</script>
+
+</body>
+</html>
